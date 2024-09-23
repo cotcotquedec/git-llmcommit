@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+import os
+import openai
+import subprocess
+import argparse
+import json
+import sys
+
+def get_staged_files():
+    result = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception("Erreur lors de l'exécution de git diff --cached.")
+    files = result.stdout.strip().split('\n')
+    return [f for f in files if f]  # Filtrer les lignes vides
+
+def get_diff():
+    result = subprocess.run(["git", "diff", "--cached"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception("Erreur lors de l'exécution de git diff --cached.")
+    return result.stdout
+
+def load_file_content(file_path):
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        print(f"Impossible de lire le fichier {file_path}: {e}", file=sys.stderr)
+        return ""
+
+def load_modified_files_contents(files):
+    contents = {}
+    for file in files:
+        contents[file] = load_file_content(file)
+    return contents
+
+def load_readme():
+    readme_files = ['README.md', 'README.rst', 'README']
+    for readme in readme_files:
+        if os.path.exists(readme):
+            return load_file_content(readme)
+    return ""
+
+def generate_commit_message(diff, files_contents, readme, user_description=None):
+    prompt = "Génère un message de commit Git clair et concis basé sur les informations suivantes.\n\n"
+
+    if user_description:
+        prompt += f"Description fournie par l'utilisateur : {user_description}\n\n"
+
+    prompt += "Diff des changements mis en scène :\n"
+    prompt += f"{diff}\n\n"
+
+    prompt += "Contenu des fichiers modifiés :\n"
+    for file, content in files_contents.items():
+        prompt += f"--- {file} ---\n{content}\n\n"
+
+    if readme:
+        prompt += f"--- README.md ---\n{readme}\n\n"
+
+    prompt += "Veuillez répondre uniquement avec un objet JSON contenant le champ 'commit_message'."
+
+    # Appel à l'API OpenAI
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4",  # Vous pouvez choisir un modèle approprié
+            messages=[
+                {"role": "system", "content": "Tu es un assistant utile qui aide à générer des messages de commit Git."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,  # Température basse pour des réponses plus déterministes
+            max_tokens=150,
+        )
+    except openai.error.OpenAIError as e:
+        raise Exception(f"Erreur lors de l'appel à l'API OpenAI : {e}")
+
+    # Extraire la réponse
+    assistant_message = response.choices[0].message['content'].strip()
+
+    # Parse le JSON
+    try:
+        commit_json = json.loads(assistant_message)
+        return commit_json.get('commit_message', '').strip()
+    except json.JSONDecodeError:
+        raise ValueError("La réponse de l'API OpenAI n'est pas un JSON valide.")
+
+def commit_changes(commit_message):
+    # Effectuer le commit
+    result = subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception(f"Erreur lors du commit : {result.stderr}")
+
+def main():
+    # Configuration de l'API OpenAI
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
+    if not openai.api_key:
+        print("Veuillez définir la variable d'environnement OPENAI_API_KEY.", file=sys.stderr)
+        sys.exit(1)
+
+    parser = argparse.ArgumentParser(
+        description="Assistant de génération automatique de messages de commit Git.",
+        usage="git llmcommit -d 'Description optionnelle des modifications'"
+    )
+    parser.add_argument('-d', '--description', type=str, help='Description optionnelle des modifications pour fournir du contexte.')
+    args = parser.parse_args()
+
+    try:
+        # Étape 1: Récupérer les fichiers mis en scène
+        staged_files = get_staged_files()
+        if not staged_files:
+            print("Aucun fichier mis en scène pour le commit.", file=sys.stderr)
+            sys.exit(1)
+
+        # Étape 2: Récupérer le diff
+        diff = get_diff()
+
+        # Étape 3: Charger les contenus des fichiers
+        files_contents = load_modified_files_contents(staged_files)
+
+        # Charger le README si disponible
+        readme = load_readme()
+
+        # Étape 4: Générer le message de commit
+        commit_message = generate_commit_message(diff, files_contents, readme, args.description)
+        if not commit_message:
+            print("Impossible de générer un message de commit.", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Message de commit généré : {commit_message}")
+
+        # Étape 5: Effectuer le commit
+        commit_changes(commit_message)
+        print("Commit effectué avec succès.")
+
+    except Exception as e:
+        print(f"Une erreur s'est produite : {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
