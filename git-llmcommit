@@ -45,32 +45,31 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
 
     commit_message = ""
 
-
-    prompt = "Génère un message de commit Git clair et concis basé sur les informations suivantes.\n\n"
+    prompt = "Generate a clear and concise Git commit message based on the following information.\n\n"
 
     if user_description:
-        prompt += f"Description fournie par l'utilisateur : {user_description}\n\n"
+        prompt += f"Description provided by the user: {user_description}\n\n"
 
-    prompt += "Diff des changements mis en scène :\n"
+    prompt += "Diff of staged changes:\n"
     prompt += f"{diff}\n\n"
 
-    prompt += "Contenu des fichiers modifiés :\n"
+    prompt += "Content of modified files:\n"
     for file, content in files_contents.items():
         prompt += f"--- {file} ---\n{content}\n\n"
 
     if readme:
         prompt += f"--- README.md ---\n{readme}\n\n"
 
-    prompt += "Veuillez répondre uniquement avec un objet JSON contenant le champ 'commit_message'."
+    prompt += "Please respond only with a JSON object containing the 'commit_message' field."
 
-    # Appel à l'API OpenAI
+    # Call to OpenAI API
     try:
 
-        # Configuration de l'API OpenAI
-        api_key= os.getenv("OPENAI_API_KEY")
+        # OpenAI API Configuration
+        api_key = os.getenv("OPENAI_API_KEY")
 
         if not api_key:
-            print("Veuillez définir la variable d'environnement OPENAI_API_KEY.", file=sys.stderr)
+            print("Please set the OPENAI_API_KEY environment variable.", file=sys.stderr)
             sys.exit(1)
 
         openai = OpenAI(
@@ -79,12 +78,12 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
 
         # Structured Result
         class CommitExtraction(BaseModel):
-            message: str
+            commit_message: str
 
         response = openai.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "Tu es un assistant utile qui aide à générer des messages de commit Git."},
+                {"role": "system", "content": "You are a helpful assistant that helps generate clear and concise Git commit messages."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
@@ -92,25 +91,24 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
             max_tokens=300,
         )
 
-        
         # CHOICE
         if not response.choices or len(response.choices) == 0:
-            raise Exception("No choices for the LLM call")
+            raise Exception("No choices returned from the LLM call.")
         choice = response.choices[0]
 
         # MESSAGE
         if not choice.message:
-            raise Exception("No choices for the LLM call")
+            raise Exception("No message content returned from the LLM call.")
         message = choice.message
 
-        commit_json = json.loads( message.content)
-        commit_message = commit_json.get('message', '').strip()
+        commit_json = json.loads(message.content)
+        commit_message = commit_json.get('commit_message', '').strip()
 
     except Exception as e:
-        raise Exception(f"Erreur lors de l'appel à l'API OpenAI : {e}")
-    
+        raise Exception(f"Error calling OpenAI API: {e}")
 
     return commit_message
+
 
 def commit_changes(commit_message):
     # Effectuer le commit
