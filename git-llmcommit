@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
-import openai
+from openai import OpenAI
+from pydantic import BaseModel
 import subprocess
 import argparse
 import json
@@ -41,6 +42,10 @@ def load_readme():
     return ""
 
 def generate_commit_message(diff, files_contents, readme, user_description=None):
+
+    commit_message = ""
+
+
     prompt = "Génère un message de commit Git clair et concis basé sur les informations suivantes.\n\n"
 
     if user_description:
@@ -60,27 +65,52 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
 
     # Appel à l'API OpenAI
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",  # Vous pouvez choisir un modèle approprié
+
+        # Configuration de l'API OpenAI
+        api_key= os.getenv("OPENAI_API_KEY")
+
+        if not api_key:
+            print("Veuillez définir la variable d'environnement OPENAI_API_KEY.", file=sys.stderr)
+            sys.exit(1)
+
+        openai = OpenAI(
+            api_key=api_key,
+        )
+
+        # Structured Result
+        class CommitExtraction(BaseModel):
+            message: str
+
+        response = openai.beta.chat.completions.parse(
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Tu es un assistant utile qui aide à générer des messages de commit Git."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,  # Température basse pour des réponses plus déterministes
-            max_tokens=150,
+            temperature=0.3,
+            response_format=CommitExtraction,
+            max_tokens=300,
         )
-    except openai.error.OpenAIError as e:
+
+        
+        # CHOICE
+        if not response.choices or len(response.choices) == 0:
+            raise Exception("No choices for the LLM call")
+        choice = response.choices[0]
+
+        # MESSAGE
+        if not choice.message:
+            raise Exception("No choices for the LLM call")
+        message = choice.message
+
+        commit_json = json.loads( message.content)
+        commit_message = commit_json.get('message', '').strip()
+
+    except Exception as e:
         raise Exception(f"Erreur lors de l'appel à l'API OpenAI : {e}")
+    
 
-    # Extraire la réponse
-    assistant_message = response.choices[0].message['content'].strip()
-
-    # Parse le JSON
-    try:
-        commit_json = json.loads(assistant_message)
-        return commit_json.get('commit_message', '').strip()
-    except json.JSONDecodeError:
-        raise ValueError("La réponse de l'API OpenAI n'est pas un JSON valide.")
+    return commit_message
 
 def commit_changes(commit_message):
     # Effectuer le commit
@@ -89,12 +119,6 @@ def commit_changes(commit_message):
         raise Exception(f"Erreur lors du commit : {result.stderr}")
 
 def main():
-    # Configuration de l'API OpenAI
-    openai.api_key = os.getenv("OPENAI_API_KEY")
-
-    if not openai.api_key:
-        print("Veuillez définir la variable d'environnement OPENAI_API_KEY.", file=sys.stderr)
-        sys.exit(1)
 
     parser = argparse.ArgumentParser(
         description="Assistant de génération automatique de messages de commit Git.",
