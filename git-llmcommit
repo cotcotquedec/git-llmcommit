@@ -10,14 +10,14 @@ import sys
 def get_staged_files():
     result = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception("Erreur lors de l'exécution de git diff --cached.")
+        raise Exception("Error executing git diff --cached.")
     files = result.stdout.strip().split('\n')
-    return [f for f in files if f]  # Filtrer les lignes vides
+    return [f for f in files if f]  # Filter out empty lines
 
 def get_diff():
     result = subprocess.run(["git", "diff", "--cached"], capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception("Erreur lors de l'exécution de git diff --cached.")
+        raise Exception("Error executing git diff --cached.")
     return result.stdout
 
 def load_file_content(file_path):
@@ -25,7 +25,7 @@ def load_file_content(file_path):
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        print(f"Impossible de lire le fichier {file_path}: {e}", file=sys.stderr)
+        print(f"Unable to read file {file_path}: {e}", file=sys.stderr)
         return ""
 
 def load_modified_files_contents(files):
@@ -106,55 +106,55 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
 
     except Exception as e:
         raise Exception(f"Error calling OpenAI API: {e}")
-
+    
     return commit_message
 
 
 def commit_changes(commit_message):
-    # Effectuer le commit
+    # Perform the commit
     result = subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True)
     if result.returncode != 0:
-        raise Exception(f"Erreur lors du commit : {result.stderr}")
+        raise Exception(f"Error during commit: {result.stderr}")
 
 def main():
 
     parser = argparse.ArgumentParser(
-        description="Assistant de génération automatique de messages de commit Git.",
-        usage="git llmcommit -d 'Description optionnelle des modifications'"
+        description="Automatic Git commit message generation assistant.",
+        usage="git llmcommit -d 'Optional description of changes'"
     )
-    parser.add_argument('-d', '--description', type=str, help='Description optionnelle des modifications pour fournir du contexte.')
+    parser.add_argument('-d', '--description', type=str, help='Optional description of changes to provide context.')
     args = parser.parse_args()
 
     try:
-        # Étape 1: Récupérer les fichiers mis en scène
+        # Step 1: Retrieve staged files
         staged_files = get_staged_files()
         if not staged_files:
-            print("Aucun fichier mis en scène pour le commit.", file=sys.stderr)
+            print("No files staged for commit.", file=sys.stderr)
             sys.exit(1)
 
-        # Étape 2: Récupérer le diff
+        # Step 2: Retrieve the diff
         diff = get_diff()
 
-        # Étape 3: Charger les contenus des fichiers
+        # Step 3: Load file contents
         files_contents = load_modified_files_contents(staged_files)
 
-        # Charger le README si disponible
+        # Load README if available
         readme = load_readme()
 
-        # Étape 4: Générer le message de commit
+        # Step 4: Generate the commit message
         commit_message = generate_commit_message(diff, files_contents, readme, args.description)
         if not commit_message:
-            print("Impossible de générer un message de commit.", file=sys.stderr)
+            print("Unable to generate a commit message.", file=sys.stderr)
             sys.exit(1)
 
-        print(f"Message de commit généré : {commit_message}")
+        print(f"Generated commit message: {commit_message}")
 
-        # Étape 5: Effectuer le commit
+        # Step 5: Perform the commit
         commit_changes(commit_message)
-        print("Commit effectué avec succès.")
+        print("Commit successful.")
 
     except Exception as e:
-        print(f"Une erreur s'est produite : {e}", file=sys.stderr)
+        print(f"An error occurred: {e}", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
