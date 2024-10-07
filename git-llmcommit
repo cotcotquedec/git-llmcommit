@@ -6,6 +6,8 @@ import subprocess
 import argparse
 import json
 import sys
+import re
+import requests
 
 # Global model variable for OpenAI API
 OPENAI_MODEL = "gpt-4o"
@@ -20,6 +22,58 @@ def get_staged_files():
         raise Exception("Error executing git diff --cached.")
     files = result.stdout.strip().split('\n')
     return [f for f in files if f]  # Filter out empty lines
+
+# Function to check git status and ensure everything is added
+def check_git_status():
+    """
+    Check if the working directory is clean and everything is staged.
+    """
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception("Error executing git status.")
+    if result.stdout.strip():
+        print("Warning: There are unstaged or untracked changes. Please make sure all changes are staged.", file=sys.stderr)
+
+# Function to get the current branch name
+def get_current_branch():
+    """
+    Retrieve the current branch name.
+    """
+    result = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception("Error executing git rev-parse --abbrev-ref HEAD.")
+    return result.stdout.strip()
+
+# Function to extract ticket reference from branch name
+def extract_ticket_reference(branch_name):
+    """
+    Extract ticket reference from the branch name if it follows the pattern (e.g., '2-add_new_layer').
+    """
+    match = re.match(r"(\d+)-", branch_name)
+    if match:
+        return match.group(1)
+    return None
+
+# Function to get GitHub issue description
+def get_github_issue_description(repo_name, issue_number):
+    """
+    Retrieve the GitHub issue description using the GitHub API.
+    """
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not github_token:
+        print("Please set the GITHUB_TOKEN environment variable to access GitHub API.", file=sys.stderr)
+        return None
+
+    url = f"https://api.github.com/repos/{repo_name}/issues/{issue_number}"
+    headers = {"Authorization": f"token {github_token}"}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        issue_data = response.json()
+        return issue_data.get("body", "")
+    else:
+        print(f"Failed to fetch issue data from GitHub: {response.status_code} {response.text}", file=sys.stderr)
+        return None
 
 # Function to get the diff of staged changes
 def get_diff():
@@ -54,22 +108,126 @@ def load_modified_files_contents(files):
     return contents
 
 # Function to generate a commit message using OpenAI
-def generate_commit_message(diff, files_contents, user_description=None):
+def generate_commit_message(diff, files_contents, user_description=None, ticket_reference=None, issue_description=None):
     """
     Generate a commit message based on the diff, file contents, and optional user description.
     """
     commit_message = ""
 
     prompt = """
-Generate a commit message that follows the "Conventional Commits" specification based on a given `git diff`, the final content of the modified files, and an optional description provided by the author.
+Generate a commit message that follows the "Conventional Commits" specification based on a given `git diff`, the final content of the modified files, and optional descriptions provided by the author.
 
 ## Steps
-...
+
+1. **Review the `git diff`:**
+   - Extract relevant information such as file modifications, types of changes (additions, deletions, updates), and the context of the modifications.
+
+2. **Determine the type of change:**
+   - Identify the nature of the changes (e.g., new feature, bug fix, documentation update).
+   - Use the commit types defined by "Conventional Commits" (e.g., `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`).
+
+3. **Analyze the final content of the modified files:**
+   - Review the final state of the modified files to refine the description.
+   - If descriptions are provided by the author (e.g., user description, ticket reference, GitHub issue description), use them to give additional context.
+
+4. **Construct the commit message:**
+   - Build a structured commit message with three main parts:
+     - **Header**: Specify the commit type and a concise subject describing the change (e.g., `feat(user): add pagination to user list`).
+     - **Body**: Include a detailed description of the changes, reasons, and possible impact (1-3 paragraphs). Integrate any author-provided descriptions to provide more context.
+     - **Footer**: (Optional) Add references to related tickets or issues in the format `ref #123` (e.g., `ref #123`, not `closes #123`).
+
+## Output Format
+
+The commit message should follow this structure:
+
+- **Header**: `[type](scope): [concise message]`
+- **Body**: Detailed explanation of the changes (1-3 paragraphs). Include additional context from any descriptions provided by the author.
+- **Footer**: Optional references to issues in the format `ref #123`.
+
+### Commit Types
+
+- `feat`: A new feature.
+- `fix`: A bug fix.
+- `docs`: Documentation changes.
+- `style`: Code style changes (formatting, semi-colons, etc.) with no logic impact.
+- `refactor`: Code refactoring without changing the logic or fixing bugs.
+- `test`: Adding or modifying tests.
+- `chore`: Other changes that don't modify source or test files.
+
+## Example
+
+### Example 1
+
+**Description provided by the user:**
+
+"Adding alphabetical sorting to the user list for better usability."
+
+**Ticket Reference:**
+
+Ticket Reference: #35
+
+**Diff of staged changes:**
+
+```diff
+diff --git a/app/user.py b/app/user.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/app/user.py
++++ b/app/user.py
+@@ -10,6 +10,7 @@ def get_user_list():
+     # Retrieve list of users
+     users = User.query.all()
+     user_list = [user.to_dict() for user in users]
++    user_list.sort(key=lambda u: u['username'])  # Sort by username
+     return user_list
+```
+
+**Content of modified files:**
+
+--- app/user.py ---
+```python
+def get_user_list():
+    users = User.query.all()
+    user_list = [user.to_dict() for user in users]
+    user_list.sort(key=lambda u: u['username'])  # Sort by username
+    return user_list
+```
+
+**Output:**
+
+```json
+{
+    "commit_message": "feat(user): add sorting by username in the user list\n\nThe user list is now sorted alphabetically by username in the `get_user_list` function for better usability.\n\nref #35: add sorting to user list in the main file"
+}
+```
+
+## Prompt Structure
+
+The generated prompt will include the following parts:
+
+- **Description provided by the user:** If available, a description provided by the user for additional context.
+- **Ticket Reference:** If available, a ticket reference in the format `Ticket Reference: #123`.
+- **GitHub Issue Description:** If available, the GitHub issue description.
+- **Diff of staged changes:** A section displaying the `git diff` of staged changes.
+- **Content of modified files:** A section showing the final content of each modified file.
+- **JSON Response Requirement:** A final instruction asking for a JSON object containing only the `commit_message` field.
+
+## Notes
+
+- Ensure the correct commit type is chosen based on the type of changes made.
+- **Issue References:** Use `ref` to reference issues in the footer, avoiding action-triggering keywords like `closes`, `fixes`, or `resolves`.
+
     """
 
     if user_description:
         prompt += "-------- Description provided by the user:\n"
         prompt += f"{user_description}\n\n"
+
+    if ticket_reference:
+        prompt += f"Ticket Reference: #{ticket_reference}\n\n"
+
+    if issue_description:
+        prompt += "-------- GitHub Issue Description:\n"
+        prompt += f"{issue_description}\n\n"
 
     prompt += "-------- Diff of staged changes:\n"
     prompt += f"{diff}\n\n"
@@ -134,6 +292,20 @@ def commit_changes(commit_message):
         raise Exception(f"Error during commit: {result.stderr}")
 
 # Main function to parse arguments and execute the script logic
+def get_repo_name():
+    """
+    Retrieve the repository name from the git remote origin URL.
+    """
+    result = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise Exception("Error executing git config --get remote.origin.url.")
+    repo_url = result.stdout.strip()
+    match = re.search(r'github.com[:/](.*?)(?:\.git)?$', repo_url)
+    if not match:
+        raise Exception("Failed to parse repository name from URL.")
+    return match.group(1)
+
+
 def main():
     """
     Main entry point for the script. Handles argument parsing and orchestrates commit message generation and committing.
@@ -147,27 +319,41 @@ def main():
     args = parser.parse_args()
 
     try:
-        # Step 1: Retrieve staged files
+        # Step 1: Check Git status
+        check_git_status()
+
+        # Step 2: Retrieve staged files
         staged_files = get_staged_files()
         if not staged_files:
             print("No files staged for commit.", file=sys.stderr)
             sys.exit(1)
 
-        # Step 2: Retrieve the diff
+        # Step 3: Retrieve the diff
         diff = get_diff()
 
-        # Step 3: Load file contents
+        # Step 4: Load file contents
         files_contents = load_modified_files_contents(staged_files)
 
-        # Step 4: Generate the commit message
-        commit_message = generate_commit_message(diff, files_contents, args.description)
+        # Step 5: Get current branch and extract ticket reference
+        branch_name = get_current_branch()
+        ticket_reference = extract_ticket_reference(branch_name)
+
+        # Step 6: Get GitHub issue description (if ticket reference is found)
+        issue_description = None
+        if ticket_reference:
+            repo_name = get_repo_name()
+            
+            issue_description = get_github_issue_description(repo_name, ticket_reference)
+
+        # Step 7: Generate the commit message
+        commit_message = generate_commit_message(diff, files_contents, args.description, ticket_reference, issue_description)
         if not commit_message:
             print("Unable to generate a commit message.", file=sys.stderr)
             sys.exit(1)
 
         print(f"Generated commit message: {commit_message}")
 
-        # Step 5: Perform the commit (if not in graceful mode)
+        # Step 8: Perform the commit (if not in graceful mode)
         if not args.graceful:
             commit_changes(commit_message)
             print("Commit successful.")
