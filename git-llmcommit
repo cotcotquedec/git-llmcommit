@@ -34,31 +34,108 @@ def load_modified_files_contents(files):
         contents[file] = load_file_content(file)
     return contents
 
-def load_readme():
-    readme_files = ['README.md', 'README.rst', 'README']
-    for readme in readme_files:
-        if os.path.exists(readme):
-            return load_file_content(readme)
-    return ""
 
-def generate_commit_message(diff, files_contents, readme, user_description=None):
+def generate_commit_message(diff, files_contents, user_description=None):
 
     commit_message = ""
 
-    prompt = "Generate a clear and concise Git commit message based on the following information.\n\n"
+    prompt = """
+Generate a commit message that follows the "Conventional Commits" specification based on a given `git diff`, the final content of the modified files, and an optional description provided by the author.
+
+## Steps
+
+1. **Review the `git diff`:**
+   - Extract relevant information such as file modifications, types of changes (additions, deletions, updates), and the context of the modifications.
+
+2. **Determine the type of change:**
+   - Identify the nature of the changes (e.g., new feature, bug fix, documentation update).
+   - Use the commit types defined by "Conventional Commits" (e.g., `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`).
+
+3. **Analyze the final content of the modified files:**
+   - Review the final state of the modified files to refine the description.
+   - If a description is provided by the author, use it to give additional context.
+
+4. **Construct the commit message:**
+   - Build a structured commit message with three main parts:
+     - **Header**: Specify the commit type and a concise subject describing the change (e.g., `feat: add pagination to user list`).
+     - **Body**: Include a detailed description of the changes, reasons, and possible impact (1-3 paragraphs). If an author-provided description is present, integrate it into the body to provide more context.
+     - **Footer**: (Optional) Add references, such as related tickets or issues (e.g., `Closes #123`, `BREAKING CHANGE`).
+
+## Output Format
+
+The commit message should follow this structure:
+
+- **Header**: `[type](scope): [concise message]`
+- **Body**: Detailed explanation of the changes (1-3 paragraphs). Include additional context if provided by the author.
+- **Footer**: Optional references (e.g., `Closes #123`, `BREAKING CHANGE`).
+
+### Commit Types
+- `feat`: A new feature.
+- `fix`: A bug fix.
+- `docs`: Documentation changes.
+- `style`: Code style changes (formatting, semi-colons, etc.) with no logic impact.
+- `refactor`: Code refactoring without changing the logic or fixing bugs.
+- `test`: Adding or modifying tests.
+- `chore`: Other changes that don’t modify source or test files.
+
+## Example
+
+### Example 1
+**Input:**
+```diff
+diff --git a/app/user.py b/app/user.py
+index 1a2b3c4..5d6e7f8 100644
+--- a/app/user.py
++++ b/app/user.py
+@@ -10,6 +10,7 @@ def get_user_list():
+     # Retrieve list of users
+     users = User.query.all()
+     user_list = [user.to_dict() for user in users]
++    user_list.sort(key=lambda u: u['username'])  # Sort by username
+     return user_list
+```
+Final content of `app/user.py`:
+```python
+def get_user_list():
+    users = User.query.all()
+    user_list = [user.to_dict() for user in users]
+    user_list.sort(key=lambda u: u['username'])  # Sort by username
+    return user_list
+```
+**Description provided by the user:**
+"Adding alphabetical sorting to the user list for better usability."
+
+**Output:**
+```json
+{
+    "commit_message": "feat(user): add sorting by username in the user list\n\nThe user list is now sorted alphabetically by username in the `get_user_list` function for better usability.\n\nCloses #45"
+}
+```
+
+## Prompt Structure
+
+The generated prompt will include the following parts:
+
+- **Description provided by the user:** If available, a description provided by the user will be included for additional context.
+- **Diff of staged changes:** A section displaying the `git diff` of staged changes.
+- **Content of modified files:** A section showing the final content of each modified file.
+- **JSON Response Requirement:** A final instruction asking for a JSON object containing the `commit_message` field only.
+
+## Notes
+- Ensure the correct commit type is chosen based on the type of changes made.
+- If a `BREAKING CHANGE` is detected, include relevant details in the footer to highlight any impact on existing behavior or APIs.
+    """
 
     if user_description:
-        prompt += f"Description provided by the user: {user_description}\n\n"
+        prompt += "-------- Description provided by the user:\n"
+        prompt += f"{user_description}\n\n"
 
-    prompt += "Diff of staged changes:\n"
+    prompt += "-------- Diff of staged changes:\n"
     prompt += f"{diff}\n\n"
 
     prompt += "Content of modified files:\n"
     for file, content in files_contents.items():
         prompt += f"--- {file} ---\n{content}\n\n"
-
-    if readme:
-        prompt += f"--- README.md ---\n{readme}\n\n"
 
     prompt += "Please respond only with a JSON object containing the 'commit_message' field."
 
@@ -83,12 +160,10 @@ def generate_commit_message(diff, files_contents, readme, user_description=None)
         response = openai.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that helps generate clear and concise Git commit messages."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.3,
-            response_format=CommitExtraction,
-            max_tokens=300,
+            response_format=CommitExtraction
         )
 
         # CHOICE
@@ -138,11 +213,9 @@ def main():
         # Step 3: Load file contents
         files_contents = load_modified_files_contents(staged_files)
 
-        # Load README if available
-        readme = load_readme()
 
         # Step 4: Generate the commit message
-        commit_message = generate_commit_message(diff, files_contents, readme, args.description)
+        commit_message = generate_commit_message(diff, files_contents, args.description)
         if not commit_message:
             print("Unable to generate a commit message.", file=sys.stderr)
             sys.exit(1)
