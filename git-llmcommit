@@ -7,20 +7,35 @@ import argparse
 import json
 import sys
 
+# Global model variable for OpenAI API
+OPENAI_MODEL = "gpt-4o"
+
+# Function to get the list of staged files
 def get_staged_files():
+    """
+    Retrieve a list of files that have been staged for commit.
+    """
     result = subprocess.run(["git", "diff", "--cached", "--name-only"], capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception("Error executing git diff --cached.")
     files = result.stdout.strip().split('\n')
     return [f for f in files if f]  # Filter out empty lines
 
+# Function to get the diff of staged changes
 def get_diff():
+    """
+    Retrieve the diff of staged changes.
+    """
     result = subprocess.run(["git", "diff", "--cached"], capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception("Error executing git diff --cached.")
     return result.stdout
 
+# Function to load the content of a file
 def load_file_content(file_path):
+    """
+    Load the content of a given file.
+    """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
@@ -28,102 +43,28 @@ def load_file_content(file_path):
         print(f"Unable to read file {file_path}: {e}", file=sys.stderr)
         return ""
 
+# Function to load the content of modified files
 def load_modified_files_contents(files):
+    """
+    Load the content of all modified files.
+    """
     contents = {}
     for file in files:
         contents[file] = load_file_content(file)
     return contents
 
-
+# Function to generate a commit message using OpenAI
 def generate_commit_message(diff, files_contents, user_description=None):
-
+    """
+    Generate a commit message based on the diff, file contents, and optional user description.
+    """
     commit_message = ""
 
     prompt = """
 Generate a commit message that follows the "Conventional Commits" specification based on a given `git diff`, the final content of the modified files, and an optional description provided by the author.
 
 ## Steps
-
-1. **Review the `git diff`:**
-   - Extract relevant information such as file modifications, types of changes (additions, deletions, updates), and the context of the modifications.
-
-2. **Determine the type of change:**
-   - Identify the nature of the changes (e.g., new feature, bug fix, documentation update).
-   - Use the commit types defined by "Conventional Commits" (e.g., `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`).
-
-3. **Analyze the final content of the modified files:**
-   - Review the final state of the modified files to refine the description.
-   - If a description is provided by the author, use it to give additional context.
-
-4. **Construct the commit message:**
-   - Build a structured commit message with three main parts:
-     - **Header**: Specify the commit type and a concise subject describing the change (e.g., `feat: add pagination to user list`).
-     - **Body**: Include a detailed description of the changes, reasons, and possible impact (1-3 paragraphs). If an author-provided description is present, integrate it into the body to provide more context.
-     - **Footer**: (Optional) Add references, such as related tickets or issues (e.g., `Closes #123`, `BREAKING CHANGE`).
-
-## Output Format
-
-The commit message should follow this structure:
-
-- **Header**: `[type](scope): [concise message]`
-- **Body**: Detailed explanation of the changes (1-3 paragraphs). Include additional context if provided by the author.
-- **Footer**: Optional references (e.g., `Closes #123`, `BREAKING CHANGE`).
-
-### Commit Types
-- `feat`: A new feature.
-- `fix`: A bug fix.
-- `docs`: Documentation changes.
-- `style`: Code style changes (formatting, semi-colons, etc.) with no logic impact.
-- `refactor`: Code refactoring without changing the logic or fixing bugs.
-- `test`: Adding or modifying tests.
-- `chore`: Other changes that don’t modify source or test files.
-
-## Example
-
-### Example 1
-**Input:**
-```diff
-diff --git a/app/user.py b/app/user.py
-index 1a2b3c4..5d6e7f8 100644
---- a/app/user.py
-+++ b/app/user.py
-@@ -10,6 +10,7 @@ def get_user_list():
-     # Retrieve list of users
-     users = User.query.all()
-     user_list = [user.to_dict() for user in users]
-+    user_list.sort(key=lambda u: u['username'])  # Sort by username
-     return user_list
-```
-Final content of `app/user.py`:
-```python
-def get_user_list():
-    users = User.query.all()
-    user_list = [user.to_dict() for user in users]
-    user_list.sort(key=lambda u: u['username'])  # Sort by username
-    return user_list
-```
-**Description provided by the user:**
-"Adding alphabetical sorting to the user list for better usability."
-
-**Output:**
-```json
-{
-    "commit_message": "feat(user): add sorting by username in the user list\n\nThe user list is now sorted alphabetically by username in the `get_user_list` function for better usability.\n\nCloses #45"
-}
-```
-
-## Prompt Structure
-
-The generated prompt will include the following parts:
-
-- **Description provided by the user:** If available, a description provided by the user will be included for additional context.
-- **Diff of staged changes:** A section displaying the `git diff` of staged changes.
-- **Content of modified files:** A section showing the final content of each modified file.
-- **JSON Response Requirement:** A final instruction asking for a JSON object containing the `commit_message` field only.
-
-## Notes
-- Ensure the correct commit type is chosen based on the type of changes made.
-- If a `BREAKING CHANGE` is detected, include relevant details in the footer to highlight any impact on existing behavior or APIs.
+...
     """
 
     if user_description:
@@ -141,7 +82,6 @@ The generated prompt will include the following parts:
 
     # Call to OpenAI API
     try:
-
         # OpenAI API Configuration
         api_key = os.getenv("OPENAI_API_KEY")
 
@@ -158,7 +98,7 @@ The generated prompt will include the following parts:
             commit_message: str
 
         response = openai.beta.chat.completions.parse(
-            model="gpt-4o-mini",
+            model=OPENAI_MODEL,
             messages=[
                 {"role": "user", "content": prompt}
             ],
@@ -184,20 +124,26 @@ The generated prompt will include the following parts:
     
     return commit_message
 
-
+# Function to commit changes using the generated message
 def commit_changes(commit_message):
-    # Perform the commit
+    """
+    Commit the staged changes using the generated commit message.
+    """
     result = subprocess.run(["git", "commit", "-m", commit_message], capture_output=True, text=True)
     if result.returncode != 0:
         raise Exception(f"Error during commit: {result.stderr}")
 
+# Main function to parse arguments and execute the script logic
 def main():
-
+    """
+    Main entry point for the script. Handles argument parsing and orchestrates commit message generation and committing.
+    """
     parser = argparse.ArgumentParser(
         description="Automatic Git commit message generation assistant.",
-        usage="git llmcommit -d 'Optional description of changes'"
+        usage="git llmcommit -d 'Optional description of changes' [--graceful]"
     )
     parser.add_argument('-d', '--description', type=str, help='Optional description of changes to provide context.')
+    parser.add_argument('--graceful', action='store_true', help='Only generate the commit message without performing the commit.')
     args = parser.parse_args()
 
     try:
@@ -213,7 +159,6 @@ def main():
         # Step 3: Load file contents
         files_contents = load_modified_files_contents(staged_files)
 
-
         # Step 4: Generate the commit message
         commit_message = generate_commit_message(diff, files_contents, args.description)
         if not commit_message:
@@ -222,9 +167,10 @@ def main():
 
         print(f"Generated commit message: {commit_message}")
 
-        # Step 5: Perform the commit
-        commit_changes(commit_message)
-        print("Commit successful.")
+        # Step 5: Perform the commit (if not in graceful mode)
+        if not args.graceful:
+            commit_changes(commit_message)
+            print("Commit successful.")
 
     except Exception as e:
         print(f"An error occurred: {e}", file=sys.stderr)
