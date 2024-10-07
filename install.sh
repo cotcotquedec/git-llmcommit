@@ -113,6 +113,30 @@ else
     echo "La variable d'environnement OPENAI_API_KEY est déjà définie."
 fi
 
+# Vérifier si GITHUB_TOKEN est défini
+if [ -z "$GITHUB_TOKEN" ]; then
+    echo "La variable d'environnement GITHUB_TOKEN n'est pas définie."
+    read -s -p "Entrez votre token GitHub : " GITHUB_TOKEN_INPUT
+    echo
+
+    # Déterminer le fichier de configuration du shell
+    if [ -n "$ZSH_VERSION" ]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+    else
+        SHELL_CONFIG="$HOME/.bashrc"
+    fi
+
+    # Ajouter le token GitHub au fichier de configuration du shell
+    echo "export GITHUB_TOKEN=\"$GITHUB_TOKEN_INPUT\"" >> "$SHELL_CONFIG"
+    echo "Ajouté 'export GITHUB_TOKEN' à $SHELL_CONFIG."
+
+    # Recharger le fichier de configuration du shell
+    source "$SHELL_CONFIG"
+    echo "Rechargement de $SHELL_CONFIG terminé."
+else
+    echo "La variable d'environnement GITHUB_TOKEN est déjà définie."
+fi
+
 echo "Installation terminée avec succès ! Vous pouvez maintenant utiliser la commande 'git llmcommit'."
 
 echo "Exemple d'utilisation :"
